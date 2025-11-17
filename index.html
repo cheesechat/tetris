@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>High-Res Tetris (HTML5 Canvas)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0f1220;
+      --panel: #1b2138;
+      --text: #e7ecff;
+      --accent: #6aa9ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 600px at 50% 0%, #111734, var(--bg));
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: minmax(320px, 600px) 300px;
+      gap: 24px;
+      align-items: start;
+    }
+    .panel {
+      background: linear-gradient(180deg, #1a2140, var(--panel));
+      border: 1px solid #2a3560;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+      padding: 16px;
+    }
+    .title {
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin: 0 0 8px 0;
+    }
+    .subtitle {
+      margin: 0 0 12px 0;
+      color: #bfc6e6;
+      font-size: 14px;
+    }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .stat {
+      background: #141a33;
+      border: 1px solid #27345f;
+      border-radius: 10px;
+      padding: 10px 12px;
+      text-align: center;
+    }
+    .stat .label { color: #9fb0e9; font-size: 12px; }
+    .stat .value { font-weight: 700; font-size: 18px; margin-top: 4px; }
+
+    .canvas-wrap {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #0b1028;
+      border: 1px solid #23305c;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+    }
+    canvas { display: block; width: 100%; height: auto; }
+    .next-preview {
+      display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px;
+    }
+    .preview-box {
+      background: #11183a;
+      border: 1px solid #2a3560;
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .controls {
+      margin-top: 16px; font-size: 14px; color: #c9d2ff;
+    }
+    .btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    button {
+      background: #1f2a54;
+      border: 1px solid #2b3a72;
+      color: #e7ecff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 0.06s ease, background 0.2s ease;
+    }
+    button:hover { transform: translateY(-1px); background: #26336a; }
+    button:active { transform: translateY(0); }
+    code.kb {
+      background: #10152f; border: 1px solid #283461; padding: 2px 6px; border-radius: 6px;
+    }
+    @media (max-width: 960px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="canvas-wrap panel">
+      <h1 class="title">High-Res Tetris</h1>
+      <p class="subtitle">Arrow keys to move, Up to rotate, Space to hard drop, Shift to hold.</p>
+      <!-- Logical canvas size controls resolution; CSS width makes it responsive -->
+      <canvas id="board" width="540" height="960" aria-label="Tetris board"></canvas>
+    </div>
+
+    <aside class="panel">
+      <div class="stats">
+        <div class="stat"><div class="label">Score</div><div id="score" class="value">0</div></div>
+        <div class="stat"><div class="label">Lines</div><div id="lines" class="value">0</div></div>
+        <div class="stat"><div class="label">Level</div><div id="level" class="value">1</div></div>
+        <div class="stat"><div class="label">Speed</div><div id="speed" class="value">1.0x</div></div>
+      </div>
+      <div class="next-preview">
+        <div class="preview-box">
+          <strong>Next</strong>
+          <canvas id="next" width="160" height="120"></canvas>
+        </div>
+        <div class="preview-box">
+          <strong>Hold</strong>
+          <canvas id="hold" width="160" height="120"></canvas>
+        </div>
+      </div>
+      <div class="controls">
+        <div><strong>Keys:</strong></div>
+        <ul>
+          <li><code class="kb">← →</code> move</li>
+          <li><code class="kb">↓</code> soft drop</li>
+          <li><code class="kb">↑</code> rotate</li>
+          <li><code class="kb">Z / X</code> rotate</li>
+          <li><code class="kb">Space</code> hard drop</li>
+          <li><code class="kb">Shift</code> hold</li>
+          <li><code class="kb">P</code> pause</li>
+        </ul>
+        <div class="btns">
+          <button id="newGame">New game</button>
+          <button id="pauseBtn">Pause</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // High-resolution rendering helpers
+    function setupHiDPI(canvas) {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      // Keep logical size but scale backing store for crisp rendering
+      const { width, height } = canvas;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale drawing back to CSS pixels
+      ctx.imageSmoothingEnabled = false;
+      return ctx;
+    }
+
+    // Game constants
+    const COLS = 10;
+    const ROWS = 20;
+    const TILE = 48; // logical pixel size per cell (board: 10x20 => 480x960)
+    const BOARD_W = COLS * TILE;
+    const BOARD_H = ROWS * TILE;
+
+    // Colors per tetromino
+    const COLORS = {
+      I: "#64e6ff",
+      O: "#ffe565",
+      T: "#c589ff",
+      S: "#7af39a",
+      Z: "#ff7a7a",
+      J: "#7aa5ff",
+      L: "#ffb074",
+      G: "#1b2138" // ghost
+    };
+
+    // Tetromino definitions (4x4 shape matrices)
+    const SHAPES = {
+      I: [
+        [0,0,0,0],
+        [1,1,1,1],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+      O: [
+        [0,1,1,0],
+        [0,1,1,0],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+      T: [
+        [0,1,0,0],
+        [1,1,1,0],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+      S: [
+        [0,1,1,0],
+        [1,1,0,0],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+      Z: [
+        [1,1,0,0],
+        [0,1,1,0],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+      J: [
+        [1,0,0,0],
+        [1,1,1,0],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+      L: [
+        [0,0,1,0],
+        [1,1,1,0],
+        [0,0,0,0],
+        [0,0,0,0]
+      ],
+    };
+
+    // Utilities
+    const randChoice = arr => arr[Math.floor(Math.random() * arr.length)];
+    const deepCopy = obj => JSON.parse(JSON.stringify(obj));
+
+    // Bag randomizer (7-bag)
+    class Bag {
+      constructor() { this.bag = []; }
+      next() {
+        if (this.bag.length === 0) {
+          this.bag = Object.keys(SHAPES);
+          // Shuffle
+          for (let i = this.bag.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.bag[i], this.bag[j]] = [this.bag[j], this.bag[i]];
+          }
+        }
+        return this.bag.pop();
+      }
+    }
+
+    // Board
+    class Board {
+      constructor(cols, rows) {
+        this.cols = cols;
+        this.rows = rows;
+        this.grid = this.empty();
+      }
+      empty() {
+        return Array.from({ length: this.rows }, () => Array(this.cols).fill(null));
+      }
+      inside(x, y) { return x >= 0 && x < this.cols && y >= 0 && y < this.rows; }
+      cell(x, y) { return this.grid[y]?.[x] ?? null; }
+      set(x, y, val) { if (this.inside(x,y)) this.grid[y][x] = val; }
+      merge(piece) {
+        piece.forEachCell((x,y,val) => { if (val) this.set(x,y,piece.type); });
+      }
+      clearLines() {
+        let cleared = 0;
+        for (let y = this.rows - 1; y >= 0; y--) {
+          if (this.grid[y].every(c => c)) {
+            this.grid.splice(y, 1);
+            this.grid.unshift(Array(this.cols).fill(null));
+            cleared++;
+            y++; // recheck current row after shift
+          }
+        }
+        return cleared;
+      }
+      collides(piece) {
+        let coll = false;
+        piece.forEachCell((x,y,val) => {
+          if (!val) return;
+          if (!this.inside(x,y) || this.cell(x,y)) coll = true;
+        });
+        return coll;
+      }
+    }
+
+    // Piece
+    class Piece {
+      constructor(type) {
+        this.type = type;
+        this.shape = deepCopy(SHAPES[type]);
+        this.x = 3;
+        this.y = -2; // start above the board
+        this.locked = false;
+        this.usedHold = false;
+      }
+      rotate(dir = 1) {
+        const s = this.shape;
+        const n = s.length;
+        const r = Array.from({ length: n }, () => Array(n).fill(0));
+        for (let y=0; y<n; y++) for (let x=0; x<n; x++) {
+          if (dir > 0) r[x][n-1-y] = s[y][x]; else r[n-1-x][y] = s[y][x];
+        }
+        this.shape = r;
+      }
+      forEachCell(cb) {
+        for (let y=0; y<4; y++) for (let x=0; x<4; x++) {
+          if (this.shape[y][x]) cb(this.x + x, this.y + y, 1);
+        }
+      }
+      move(dx, dy) { this.x += dx; this.y += dy; }
+      clone() {
+        const p = new Piece(this.type);
+        p.shape = deepCopy(this.shape);
+        p.x = this.x; p.y = this.y;
+        return p;
+      }
+    }
+
+    // Game
+    const boardCanvas = document.getElementById("board");
+    const nextCanvas = document.getElementById("next");
+    const holdCanvas = document.getElementById("hold");
+    const ctx = setupHiDPI(boardCanvas);
+    const nctx = setupHiDPI(nextCanvas);
+    const hctx = setupHiDPI(holdCanvas);
+
+    nextCanvas.style.width = "160px"; nextCanvas.style.height = "120px";
+    holdCanvas.style.width = "160px"; holdCanvas.style.height = "120px";
+
+    const board = new Board(COLS, ROWS);
+    const bag = new Bag();
+
+    let current = new Piece(bag.next());
+    let nextType = bag.next();
+    let holdType = null;
+
+    let score = 0, lines = 0, level = 1;
+    let dropInterval = 800; // ms base
+    let lastDrop = 0;
+    let paused = false;
+    let over = false;
+
+    const scoreEl = document.getElementById("score");
+    const linesEl = document.getElementById("lines");
+    const levelEl = document.getElementById("level");
+    const speedEl = document.getElementById("speed");
+    const newGameBtn = document.getElementById("newGame");
+    const pauseBtn = document.getElementById("pauseBtn");
+
+    function reset() {
+      board.grid = board.empty();
+      score = 0; lines = 0; level = 1; dropInterval = 800;
+      current = new Piece(bag.next());
+      nextType = bag.next();
+      holdType = null;
+      over = false; paused = false;
+      updateHUD();
+    }
+
+    function updateHUD() {
+      scoreEl.textContent = score;
+      linesEl.textContent = lines;
+      levelEl.textContent = level;
+      speedEl.textContent = (800 / dropInterval).toFixed(1) + "x";
+    }
+
+    function levelUp() {
+      level++;
+      dropInterval = Math.max(90, Math.floor(dropInterval * 0.85));
+      updateHUD();
+    }
+
+    function drawCell(context, x, y, color, size=TILE) {
+      const px = x * size, py = y * size;
+      // Base
+      context.fillStyle = color;
+      context.fillRect(px, py, size, size);
+      // Gloss + depth
+      context.fillStyle = "rgba(255,255,255,0.10)";
+      context.fillRect(px, py, size, size * 0.25);
+      context.strokeStyle = "rgba(0,0,0,0.35)";
+      context.lineWidth = 2;
+      context.strokeRect(px + 1, py + 1, size - 2, size - 2);
+      // Inner bevel
+      context.strokeStyle = "rgba(255,255,255,0.06)";
+      context.strokeRect(px + 2, py + 2, size - 4, size - 4);
+    }
+
+    function drawBoard() {
+      // Background grid
+      ctx.clearRect(0,0,BOARD_W,BOARD_H);
+      ctx.fillStyle = "#0a102a";
+      ctx.fillRect(0,0,BOARD_W,BOARD_H);
+      // Grid lines
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.lineWidth = 1;
+      for (let x=0; x<=COLS; x++) {
+        ctx.beginPath(); ctx.moveTo(x*TILE, 0); ctx.lineTo(x*TILE, BOARD_H); ctx.stroke();
+      }
+      for (let y=0; y<=ROWS; y++) {
+        ctx.beginPath(); ctx.moveTo(0, y*TILE); ctx.lineTo(BOARD_W, y*TILE); ctx.stroke();
+      }
+      // Existing blocks
+      for (let y=0; y<ROWS; y++) for (let x=0; x<COLS; x++) {
+        const t = board.cell(x,y);
+        if (t) drawCell(ctx, x, y, COLORS[t]);
+      }
+      // Ghost piece
+      const ghost = current.clone();
+      while (!board.collides(ghost)) ghost.y++;
+      ghost.y--;
+      ghost.forEachCell((x,y,val) => {
+        if (val && y >= 0) drawCell(ctx, x, y, COLORS.G);
+      });
+      // Current piece
+      current.forEachCell((x,y,val) => {
+        if (val && y >= 0) drawCell(ctx, x, y, COLORS[current.type]);
+      });
+
+      // Game over overlay
+      if (over) {
+        ctx.fillStyle = "rgba(0,0,0,0.6)";
+        ctx.fillRect(0,0,BOARD_W,BOARD_H);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 32px system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText("Game Over", BOARD_W/2, BOARD_H/2 - 10);
+        ctx.font = "16px system-ui";
+        ctx.fillText("Press New game", BOARD_W/2, BOARD_H/2 + 18);
+      }
+    }
+
+    function drawPreview(context, type) {
+      context.clearRect(0,0,context.canvas.width, context.canvas.height);
+      context.fillStyle = "#0c1333";
+      context.fillRect(0,0,context.canvas.width, context.canvas.height);
+      if (!type) return;
+      const size = 24; // preview cell size
+      // Center shape
+      const shape = SHAPES[type];
+      const bounds = { minX:4, maxX:0, minY:4, maxY:0 };
+      for (let y=0; y<4; y++) for (let x=0; x<4; x++) {
+        if (shape[y][x]) {
+          bounds.minX = Math.min(bounds.minX, x);
+          bounds.maxX = Math.max(bounds.maxX, x);
+          bounds.minY = Math.min(bounds.minY, y);
+          bounds.maxY = Math.max(bounds.maxY, y);
+        }
+      }
+      const w = (bounds.maxX - bounds.minX + 1) * size;
+      const h = (bounds.maxY - bounds.minY + 1) * size;
+      const ox = Math.floor((context.canvas.width / (window.devicePixelRatio||1) - w)/2);
+      const oy = Math.floor((context.canvas.height / (window.devicePixelRatio||1) - h)/2);
+      for (let y=0; y<4; y++) for (let x=0; x<4; x++) {
+        if (shape[y][x]) drawCell(context, ox/size + (x - bounds.minX), oy/size + (y - bounds.minY), COLORS[type], size);
+      }
+    }
+
+    function spawnNext() {
+      current = new Piece(nextType);
+      nextType = bag.next();
+      current.usedHold = false;
+      // If spawns colliding -> game over
+      if (board.collides(current)) { over = true; }
+      drawPreview(nctx, nextType);
+    }
+
+    function hardDrop() {
+      let dropped = 0;
+      while (!board.collides(current)) { current.y++; dropped++; }
+      current.y--;
+      if (dropped > 0) lockPiece(true);
+    }
+
+    function lockPiece(hard=false) {
+      board.merge(current);
+      const cleared = board.clearLines();
+      if (cleared) {
+        // Scoring: single 100, double 300, triple 500, tetris 800
+        const add = [0,100,300,500,800][cleared] * level;
+        score += add;
+        lines += cleared;
+        if (lines >= level * 10) levelUp();
+      } else if (hard) {
+        score += 2 * level; // small reward for hard drop without clear
+      }
+      updateHUD();
+      spawnNext();
+    }
+
+    function hold() {
+      if (current.usedHold) return; // only once per drop
+      const prev = holdType;
+      holdType = current.type;
+      current.usedHold = true;
+      drawPreview(hctx, holdType);
+      if (prev) current = new Piece(prev);
+      else spawnNext();
+    }
+
+    function tryMove(dx, dy) {
+      const test = current.clone();
+      test.move(dx, dy);
+      if (!board.collides(test)) { current = test; return true; }
+      return false;
+    }
+
+    function tryRotate(dir=1) {
+      const test = current.clone();
+      test.rotate(dir);
+      // Simple wall-kick attempts
+      const kicks = [
+        {x:0,y:0}, {x:1,y:0}, {x:-1,y:0}, {x:0,y:-1}, {x:2,y:0}, {x:-2,y:0}
+      ];
+      for (const k of kicks) {
+        const candidate = test.clone();
+        candidate.x += k.x; candidate.y += k.y;
+        if (!board.collides(candidate)) { current = candidate; return true; }
+      }
+      return false;
+    }
+
+    // Input
+    const keys = new Set();
+    window.addEventListener("keydown", (e) => {
+      if (over) return;
+      if (["ArrowLeft","ArrowRight","ArrowDown","ArrowUp","Space","ShiftLeft","KeyZ","KeyX","KeyP"].includes(e.code)) {
+        e.preventDefault();
+      }
+      switch (e.code) {
+        case "ArrowLeft": tryMove(-1,0); break;
+        case "ArrowRight": tryMove(1,0); break;
+        case "ArrowDown": if (tryMove(0,1)) score += 1; updateHUD(); break;
+        case "ArrowUp": tryRotate(1); break;
+        case "KeyZ": tryRotate(-1); break;
+        case "KeyX": tryRotate(1); break;
+        case "Space": hardDrop(); break;
+        case "ShiftLeft": hold(); break;
+        case "KeyP": paused = !paused; break;
+      }
+    });
+
+    // Buttons
+    newGameBtn.addEventListener("click", () => { reset(); });
+    pauseBtn.addEventListener("click", () => { paused = !paused; });
+
+    // Game loop
+    function tick(timestamp) {
+      if (!lastDrop) lastDrop = timestamp;
+      const delta = timestamp - lastDrop;
+      if (!paused && !over && delta >= dropInterval) {
+        lastDrop = timestamp;
+        if (!tryMove(0,1)) lockPiece();
+      }
+      drawBoard();
+      requestAnimationFrame(tick);
+    }
+
+    // Init
+    reset();
+    drawPreview(nctx, nextType);
+    drawPreview(hctx, holdType);
+    requestAnimationFrame(tick);
+
+    // Resize handling: keep crispness on DPR changes
+    window.matchMedia(`(resolution: ${Math.round((window.devicePixelRatio||1)*96)}dpi)`).addEventListener("change", () => {
+      setupHiDPI(boardCanvas);
+      setupHiDPI(nextCanvas);
+      setupHiDPI(holdCanvas);
+    });
+  </script>
+</body>
+</html>
